@@ -2,13 +2,13 @@ package gosec_test
 
 import (
 	"go/ast"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/securego/gosec/v2"
 	"github.com/securego/gosec/v2/testutils"
 )
@@ -17,14 +17,8 @@ var _ = Describe("Helpers", func() {
 	Context("when listing package paths", func() {
 		var dir string
 		JustBeforeEach(func() {
-			var err error
-			dir, err = ioutil.TempDir("", "gosec")
-			Expect(err).ShouldNot(HaveOccurred())
-			_, err = ioutil.TempFile(dir, "test*.go")
-			Expect(err).ShouldNot(HaveOccurred())
-		})
-		AfterEach(func() {
-			err := os.RemoveAll(dir)
+			dir = GinkgoT().TempDir()
+			_, err := os.MkdirTemp(dir, "test*.go")
 			Expect(err).ShouldNot(HaveOccurred())
 		})
 		It("should return the root directory as package path", func() {
@@ -32,7 +26,7 @@ var _ = Describe("Helpers", func() {
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(paths).Should(Equal([]string{dir}))
 		})
-		It("should return the package package path", func() {
+		It("should return the package path", func() {
 			paths, err := gosec.PackagePaths(dir+"/...", nil)
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(paths).Should(Equal([]string{dir}))
@@ -91,7 +85,7 @@ var _ = Describe("Helpers", func() {
 	Context("when excluding the dirs", func() {
 		It("should create a proper regexp", func() {
 			r := gosec.ExcludedDirsRegExp([]string{"test"})
-			Expect(len(r)).Should(Equal(1))
+			Expect(r).Should(HaveLen(1))
 			match := r[0].MatchString("/home/go/src/project/test/pkg")
 			Expect(match).Should(BeTrue())
 			match = r[0].MatchString("/home/go/src/project/vendor/pkg")
@@ -100,7 +94,7 @@ var _ = Describe("Helpers", func() {
 
 		It("should create a proper regexp for dir with subdir", func() {
 			r := gosec.ExcludedDirsRegExp([]string{`test/generated`})
-			Expect(len(r)).Should(Equal(1))
+			Expect(r).Should(HaveLen(1))
 			match := r[0].MatchString("/home/go/src/project/test/generated")
 			Expect(match).Should(BeTrue())
 			match = r[0].MatchString("/home/go/src/project/test/pkg")
@@ -111,9 +105,9 @@ var _ = Describe("Helpers", func() {
 
 		It("should create no regexp when dir list is empty", func() {
 			r := gosec.ExcludedDirsRegExp(nil)
-			Expect(len(r)).Should(Equal(0))
+			Expect(r).Should(BeEmpty())
 			r = gosec.ExcludedDirsRegExp([]string{})
-			Expect(len(r)).Should(Equal(0))
+			Expect(r).Should(BeEmpty())
 		})
 	})
 
@@ -251,6 +245,38 @@ var _ = Describe("Helpers", func() {
 
 			Expect(result).Should(HaveKeyWithValue("fmt", "Println"))
 		})
+
+		It("should return the type and call name when built-in new function is overridden", func() {
+			pkg := testutils.NewTestPackage()
+			defer pkg.Close()
+			pkg.AddFile("main.go", `
+      package main
+
+      type S struct{ F int }
+
+      func (f S) Fun() {}
+
+      func new() S { return S{} }
+
+      func main() {
+	      new().Fun()
+      }
+			`)
+			ctx := pkg.CreateContext("main.go")
+			result := map[string]string{}
+			visitor := testutils.NewMockVisitor()
+			visitor.Context = ctx
+			visitor.Callback = func(n ast.Node, ctx *gosec.Context) bool {
+				typeName, call, err := gosec.GetCallInfo(n, ctx)
+				if err == nil {
+					result[typeName] = call
+				}
+				return true
+			}
+			ast.Walk(visitor, ctx.Root)
+
+			Expect(result).Should(HaveKeyWithValue("main", "new"))
+		})
 	})
 	Context("when getting binary expression operands", func() {
 		It("should return all operands of a binary expression", func() {
@@ -281,7 +307,7 @@ var _ = Describe("Helpers", func() {
 			ast.Walk(visitor, ctx.Root)
 
 			operands := gosec.GetBinaryExprOperands(be)
-			Expect(len(operands)).Should(Equal(2))
+			Expect(operands).Should(HaveLen(2))
 		})
 		It("should return all operands of complex binary expression", func() {
 			pkg := testutils.NewTestPackage()
@@ -313,7 +339,7 @@ var _ = Describe("Helpers", func() {
 			ast.Walk(visitor, ctx.Root)
 
 			operands := gosec.GetBinaryExprOperands(be)
-			Expect(len(operands)).Should(Equal(4))
+			Expect(operands).Should(HaveLen(4))
 		})
 	})
 })

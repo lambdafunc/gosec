@@ -5,6 +5,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/securego/gosec/v2"
 	"github.com/securego/gosec/v2/testutils"
 )
@@ -20,7 +21,7 @@ var _ = Describe("Call List", func() {
 	})
 
 	It("should be possible to add a single call", func() {
-		Expect(calls).Should(HaveLen(0))
+		Expect(calls).Should(BeEmpty())
 		calls.Add("foo", "bar")
 		Expect(calls).Should(HaveLen(1))
 
@@ -31,7 +32,7 @@ var _ = Describe("Call List", func() {
 	})
 
 	It("should be possible to add multiple calls at once", func() {
-		Expect(calls).Should(HaveLen(0))
+		Expect(calls).Should(BeEmpty())
 		calls.AddAll("fmt", "Sprint", "Sprintf", "Printf", "Println")
 
 		expected := map[string]bool{
@@ -45,14 +46,14 @@ var _ = Describe("Call List", func() {
 	})
 
 	It("should be possible to add pointer call", func() {
-		Expect(calls).Should(HaveLen(0))
+		Expect(calls).Should(BeEmpty())
 		calls.Add("*bytes.Buffer", "WriteString")
 		actual := calls.ContainsPointer("*bytes.Buffer", "WriteString")
 		Expect(actual).Should(BeTrue())
 	})
 
 	It("should be possible to check pointer call", func() {
-		Expect(calls).Should(HaveLen(0))
+		Expect(calls).Should(BeEmpty())
 		calls.Add("bytes.Buffer", "WriteString")
 		actual := calls.ContainsPointer("*bytes.Buffer", "WriteString")
 		Expect(actual).Should(BeTrue())
@@ -78,6 +79,56 @@ var _ = Describe("Call List", func() {
 
 		// Search for md5.New()
 		calls.Add("crypto/md5", "New")
+
+		// Stub out visitor and count number of matched call expr
+		matched := 0
+		v := testutils.NewMockVisitor()
+		v.Context = ctx
+		v.Callback = func(n ast.Node, ctx *gosec.Context) bool {
+			if _, ok := n.(*ast.CallExpr); ok && calls.ContainsPkgCallExpr(n, ctx, false) != nil {
+				matched++
+			}
+			return true
+		}
+		ast.Walk(v, ctx.Root)
+		Expect(matched).Should(Equal(1))
+	})
+
+	It("should match a package call expression", func() {
+		// Create file to be scanned
+		pkg := testutils.NewTestPackage()
+		defer pkg.Close()
+		pkg.AddFile("cipher.go", testutils.SampleCodeG405[0].Code[0])
+
+		ctx := pkg.CreateContext("cipher.go")
+
+		// Search for des.NewCipher()
+		calls.Add("crypto/des", "NewCipher")
+
+		// Stub out visitor and count number of matched call expr
+		matched := 0
+		v := testutils.NewMockVisitor()
+		v.Context = ctx
+		v.Callback = func(n ast.Node, ctx *gosec.Context) bool {
+			if _, ok := n.(*ast.CallExpr); ok && calls.ContainsPkgCallExpr(n, ctx, false) != nil {
+				matched++
+			}
+			return true
+		}
+		ast.Walk(v, ctx.Root)
+		Expect(matched).Should(Equal(1))
+	})
+
+	It("should match a package call expression", func() {
+		// Create file to be scanned
+		pkg := testutils.NewTestPackage()
+		defer pkg.Close()
+		pkg.AddFile("md4.go", testutils.SampleCodeG406[0].Code[0])
+
+		ctx := pkg.CreateContext("md4.go")
+
+		// Search for md4.New()
+		calls.Add("golang.org/x/crypto/md4", "New")
 
 		// Stub out visitor and count number of matched call expr
 		matched := 0
