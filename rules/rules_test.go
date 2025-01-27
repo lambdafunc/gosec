@@ -6,6 +6,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/securego/gosec/v2"
 	"github.com/securego/gosec/v2/rules"
 	"github.com/securego/gosec/v2/testutils"
@@ -54,6 +55,10 @@ var _ = Describe("gosec rules", func() {
 			runner("G101", testutils.SampleCodeG101)
 		})
 
+		It("should detect hardcoded credential values", func() {
+			runner("G101", testutils.SampleCodeG101Values)
+		})
+
 		It("should detect binding to all network interfaces", func() {
 			runner("G102", testutils.SampleCodeG102)
 		})
@@ -88,6 +93,22 @@ var _ = Describe("gosec rules", func() {
 
 		It("should detect DoS vulnerability via decompression bomb", func() {
 			runner("G110", testutils.SampleCodeG110)
+		})
+
+		It("should detect potential directory traversal", func() {
+			runner("G111", testutils.SampleCodeG111)
+		})
+
+		It("should detect potential slowloris attack", func() {
+			runner("G112", testutils.SampleCodeG112)
+		})
+
+		It("should detect potential uncontrolled memory consumption in Rat.SetString", func() {
+			runner("G113", testutils.SampleCodeG113)
+		})
+
+		It("should detect uses of net/http serve functions that have no support for setting timeouts", func() {
+			runner("G114", testutils.SampleCodeG114)
 		})
 
 		It("should detect sql injection via format strings", func() {
@@ -130,10 +151,6 @@ var _ = Describe("gosec rules", func() {
 			runner("G306", testutils.SampleCodeG306)
 		})
 
-		It("should detect unsafe defer of os.Close", func() {
-			runner("G307", testutils.SampleCodeG307)
-		})
-
 		It("should detect weak crypto algorithms", func() {
 			runner("G401", testutils.SampleCodeG401)
 		})
@@ -152,6 +169,22 @@ var _ = Describe("gosec rules", func() {
 
 		It("should find non cryptographically secure random number sources", func() {
 			runner("G404", testutils.SampleCodeG404)
+		})
+
+		It("should detect weak crypto algorithms", func() {
+			runner("G405", testutils.SampleCodeG405)
+		})
+
+		It("should detect weak crypto algorithms", func() {
+			runner("G405", testutils.SampleCodeG405b)
+		})
+
+		It("should detect weak crypto algorithms", func() {
+			runner("G406", testutils.SampleCodeG406)
+		})
+
+		It("should detect weak crypto algorithms", func() {
+			runner("G406", testutils.SampleCodeG406b)
 		})
 
 		It("should detect blocklisted imports - MD5", func() {
@@ -174,8 +207,19 @@ var _ = Describe("gosec rules", func() {
 			runner("G505", testutils.SampleCodeG505)
 		})
 
+		It("should detect blocklisted imports - MD4", func() {
+			runner("G506", testutils.SampleCodeG506)
+		})
+
+		It("should detect blocklisted imports - RIPEMD160", func() {
+			runner("G507", testutils.SampleCodeG507)
+		})
+
 		It("should detect implicit aliasing in ForRange", func() {
-			runner("G601", testutils.SampleCodeG601)
+			major, minor, _ := gosec.GoVersion()
+			if major <= 1 && minor < 22 {
+				runner("G601", testutils.SampleCodeG601)
+			}
 		})
 	})
 })
