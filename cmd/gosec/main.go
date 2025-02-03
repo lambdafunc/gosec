@@ -17,7 +17,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"runtime"
@@ -25,7 +25,10 @@ import (
 	"strings"
 
 	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/analyzers"
+	"github.com/securego/gosec/v2/autofix"
 	"github.com/securego/gosec/v2/cmd/vflag"
+	"github.com/securego/gosec/v2/issue"
 	"github.com/securego/gosec/v2/report"
 	"github.com/securego/gosec/v2/rules"
 )
@@ -57,6 +60,8 @@ USAGE:
 	$ gosec -exclude=G101 $GOPATH/src/github.com/example/project/...
 
 `
+	// Environment variable for AI API key.
+	aiApiKeyEnv = "GOSEC_AI_API_KEY" // #nosec G101
 )
 
 type arrayFlags []string
@@ -71,7 +76,7 @@ func (a *arrayFlags) Set(value string) error {
 }
 
 var (
-	//#nosec flag
+	// #nosec flag
 	flagIgnoreNoSec = flag.Bool("nosec", false, "Ignores #nosec comments when set")
 
 	// show ignored
@@ -80,8 +85,11 @@ var (
 	// format output
 	flagFormat = flag.String("fmt", "text", "Set output format. Valid options are: json, yaml, csv, junit-xml, html, sonarqube, golint, sarif or text")
 
-	//#nosec alternative tag
+	// #nosec alternative tag
 	flagAlternativeNoSec = flag.String("nosec-tag", "", "Set an alternative string for #nosec. Some examples: #dontanalyze, #falsepositive")
+
+	// flagEnableAudit enables audit mode
+	flagEnableAudit = flag.Bool("enable-audit", false, "Enable audit mode")
 
 	// output file
 	flagOutput = flag.String("out", "", "Set output file for results")
@@ -133,19 +141,34 @@ var (
 	// print the text report with color, this is enabled by default
 	flagColor = flag.Bool("color", true, "Prints the text format report with colorization when it goes in the stdout")
 
+	// append ./... to the target dir.
+	flagRecursive = flag.Bool("r", false, "Appends \"./...\" to the target dir.")
+
 	// overrides the output format when stdout the results while saving them in the output file
 	flagVerbose = flag.String("verbose", "", "Overrides the output format when stdout the results while saving them in the output file.\nValid options are: json, yaml, csv, junit-xml, html, sonarqube, golint, sarif or text")
 
 	// output suppression information for auditing purposes
 	flagTrackSuppressions = flag.Bool("track-suppressions", false, "Output suppression information, including its kind and justification")
 
-	// exlude the folders from scan
+	// flagTerse shows only the summary of scan discarding all the logs
+	flagTerse = flag.Bool("terse", false, "Shows only the results and summary")
+
+	// AI platform provider to generate solutions to issues
+	flagAiApiProvider = flag.String("ai-api-provider", "", "AI API provider to generate auto fixes to issues.\nValid options are: gemini")
+
+	// key to implementing AI provider services
+	flagAiApiKey = flag.String("ai-api-key", "", "Key to access the AI API")
+
+	// endpoint to the AI provider
+	flagAiEndpoint = flag.String("ai-endpoint", "", "Endpoint AI API.\nThis is optional, the default API endpoint will be used when not provided.")
+
+	// exclude the folders from scan
 	flagDirsExclude arrayFlags
 
 	logger *log.Logger
 )
 
-//#nosec
+// #nosec
 func usage() {
 	usageText := fmt.Sprintf(usageText, Version, GitTag, BuildDate)
 	fmt.Fprintln(os.Stderr, usageText)
@@ -155,14 +178,23 @@ func usage() {
 
 	// sorted rule list for ease of reading
 	rl := rules.Generate(*flagTrackSuppressions)
-	keys := make([]string, 0, len(rl.Rules))
+	al := analyzers.Generate(*flagTrackSuppressions)
+	keys := make([]string, 0, len(rl.Rules)+len(al.Analyzers))
 	for key := range rl.Rules {
+		keys = append(keys, key)
+	}
+	for key := range al.Analyzers {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		v := rl.Rules[k]
-		fmt.Fprintf(os.Stderr, "\t%s: %s\n", k, v.Description)
+		var description string
+		if rule, ok := rl.Rules[k]; ok {
+			description = rule.Description
+		} else if analyzer, ok := al.Analyzers[k]; ok {
+			description = analyzer.Description
+		}
+		fmt.Fprintf(os.Stderr, "\t%s: %s\n", k, description)
 	}
 	fmt.Fprint(os.Stderr, "\n")
 }
@@ -170,12 +202,12 @@ func usage() {
 func loadConfig(configFile string) (gosec.Config, error) {
 	config := gosec.NewConfig()
 	if configFile != "" {
-		//#nosec
+		// #nosec
 		file, err := os.Open(configFile)
 		if err != nil {
 			return nil, err
 		}
-		defer file.Close() //#nosec G307
+		defer file.Close() // #nosec G307
 		if _, err := config.ReadFrom(file); err != nil {
 			return nil, err
 		}
@@ -189,11 +221,14 @@ func loadConfig(configFile string) (gosec.Config, error) {
 	if *flagAlternativeNoSec != "" {
 		config.SetGlobal(gosec.NoSecAlternative, *flagAlternativeNoSec)
 	}
-	// set global option IncludeRules ,when flag set or global option IncludeRules  is nil
+	if *flagEnableAudit {
+		config.SetGlobal(gosec.Audit, "true")
+	}
+	// set global option IncludeRules, when flag set or global option IncludeRules  is nil
 	if v, _ := config.GetGlobal(gosec.IncludeRules); *flagRulesInclude != "" || v == "" {
 		config.SetGlobal(gosec.IncludeRules, *flagRulesInclude)
 	}
-	// set global option ExcludeRules ,when flag set or global option IncludeRules  is nil
+	// set global option ExcludeRules, when flag set or global option ExcludeRules  is nil
 	if v, _ := config.GetGlobal(gosec.ExcludeRules); flagRulesExclude.String() != "" || v == "" {
 		config.SetGlobal(gosec.ExcludeRules, flagRulesExclude.String())
 	}
@@ -218,6 +253,26 @@ func loadRules(include, exclude string) rules.RuleList {
 		logger.Println("Excluding rules: default")
 	}
 	return rules.Generate(*flagTrackSuppressions, filters...)
+}
+
+func loadAnalyzers(include, exclude string) *analyzers.AnalyzerList {
+	var filters []analyzers.AnalyzerFilter
+	if include != "" {
+		logger.Printf("Including analyzers: %s", include)
+		including := strings.Split(include, ",")
+		filters = append(filters, analyzers.NewAnalyzerFilter(false, including...))
+	} else {
+		logger.Println("Including analyzers: default")
+	}
+
+	if exclude != "" {
+		logger.Printf("Excluding analyzers: %s", exclude)
+		excluding := strings.Split(exclude, ",")
+		filters = append(filters, analyzers.NewAnalyzerFilter(true, excluding...))
+	} else {
+		logger.Println("Excluding analyzers: default")
+	}
+	return analyzers.Generate(*flagTrackSuppressions, filters...)
 }
 
 func getRootPaths(paths []string) []string {
@@ -250,11 +305,11 @@ func printReport(format string, color bool, rootPaths []string, reportInfo *gose
 }
 
 func saveReport(filename, format string, rootPaths []string, reportInfo *gosec.ReportInfo) error {
-	outfile, err := os.Create(filename) //#nosec G304
+	outfile, err := os.Create(filename) // #nosec G304
 	if err != nil {
 		return err
 	}
-	defer outfile.Close() //#nosec G307
+	defer outfile.Close() // #nosec G307
 	err = report.CreateReport(outfile, format, false, rootPaths, reportInfo)
 	if err != nil {
 		return err
@@ -262,22 +317,22 @@ func saveReport(filename, format string, rootPaths []string, reportInfo *gosec.R
 	return nil
 }
 
-func convertToScore(value string) (gosec.Score, error) {
+func convertToScore(value string) (issue.Score, error) {
 	value = strings.ToLower(value)
 	switch value {
 	case "low":
-		return gosec.Low, nil
+		return issue.Low, nil
 	case "medium":
-		return gosec.Medium, nil
+		return issue.Medium, nil
 	case "high":
-		return gosec.High, nil
+		return issue.High, nil
 	default:
-		return gosec.Low, fmt.Errorf("provided value '%s' not valid. Valid options: low, medium, high", value)
+		return issue.Low, fmt.Errorf("provided value '%s' not valid. Valid options: low, medium, high", value)
 	}
 }
 
-func filterIssues(issues []*gosec.Issue, severity gosec.Score, confidence gosec.Score) ([]*gosec.Issue, int) {
-	result := make([]*gosec.Issue, 0)
+func filterIssues(issues []*issue.Issue, severity issue.Score, confidence issue.Score) ([]*issue.Issue, int) {
+	result := make([]*issue.Issue, 0)
 	trueIssues := 0
 	for _, issue := range issues {
 		if issue.Severity >= severity && issue.Confidence >= confidence {
@@ -288,6 +343,19 @@ func filterIssues(issues []*gosec.Issue, severity gosec.Score, confidence gosec.
 		}
 	}
 	return result, trueIssues
+}
+
+func exit(issues []*issue.Issue, errors map[string][]gosec.Error, noFail bool) {
+	nsi := 0
+	for _, issue := range issues {
+		if len(issue.Suppressions) == 0 {
+			nsi++
+		}
+	}
+	if (nsi > 0 || len(errors) > 0) && !noFail {
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 func main() {
@@ -303,9 +371,9 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nError: failed to exclude the %q directory from scan", "vendor")
 	}
-	err = flag.Set("exclude-dir", ".git")
+	err = flag.Set("exclude-dir", "\\.git/")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: failed to exclude the %q directory from scan", ".git")
+		fmt.Fprintf(os.Stderr, "\nError: failed to exclude the %q directory from scan", "\\.git/")
 	}
 
 	// set for exclude
@@ -319,9 +387,9 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Ensure at least one file was specified
-	if flag.NArg() == 0 {
-		fmt.Fprintf(os.Stderr, "\nError: FILE [FILE...] or './...' expected\n") //#nosec
+	// Ensure at least one file was specified or that the recursive -r flag was set.
+	if flag.NArg() == 0 && !*flagRecursive {
+		fmt.Fprintf(os.Stderr, "\nError: FILE [FILE...] or './...' or -r expected\n") // #nosec
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -337,8 +405,8 @@ func main() {
 		}
 	}
 
-	if *flagQuiet {
-		logger = log.New(ioutil.Discard, "", 0)
+	if *flagQuiet || *flagTerse {
+		logger = log.New(io.Discard, "", 0)
 	} else {
 		logger = log.New(logWriter, "[gosec] ", log.LstdFlags)
 	}
@@ -370,23 +438,33 @@ func main() {
 	}
 
 	ruleList := loadRules(includeRules, excludeRules)
-	if len(ruleList.Rules) == 0 {
-		logger.Fatal("No rules are configured")
+
+	analyzerList := loadAnalyzers(includeRules, excludeRules)
+
+	if len(ruleList.Rules) == 0 && len(analyzerList.Analyzers) == 0 {
+		logger.Fatal("No rules/analyzers are configured")
 	}
 
 	// Create the analyzer
 	analyzer := gosec.NewAnalyzer(config, *flagScanTests, *flagExcludeGenerated, *flagTrackSuppressions, *flagConcurrency, logger)
 	analyzer.LoadRules(ruleList.RulesInfo())
+	analyzer.LoadAnalyzers(analyzerList.AnalyzersInfo())
 
 	excludedDirs := gosec.ExcludedDirsRegExp(flagDirsExclude)
 	var packages []string
-	for _, path := range flag.Args() {
+
+	paths := flag.Args()
+	if len(paths) == 0 {
+		paths = append(paths, "./...")
+	}
+	for _, path := range paths {
 		pcks, err := gosec.PackagePaths(path, excludedDirs)
 		if err != nil {
 			logger.Fatal(err)
 		}
 		packages = append(packages, pcks...)
 	}
+
 	if len(packages) == 0 {
 		logger.Fatal("No packages found")
 	}
@@ -425,6 +503,18 @@ func main() {
 
 	reportInfo := gosec.NewReportInfo(issues, metrics, errors).WithVersion(Version)
 
+	// Call AI request to solve the issues
+	aiApiKey := os.Getenv(aiApiKeyEnv)
+	if aiApiKeyEnv == "" {
+		aiApiKey = *flagAiApiKey
+	}
+	if *flagAiApiProvider != "" && aiApiKey != "" {
+		err := autofix.GenerateSolution(*flagAiApiProvider, aiApiKey, *flagAiEndpoint, issues)
+		if err != nil {
+			logger.Print(err)
+		}
+	}
+
 	if *flagOutput == "" || *flagStdOut {
 		fileFormat := getPrintedFormat(*flagFormat, *flagVerbose)
 		if err := printReport(fileFormat, *flagColor, rootPaths, reportInfo); err != nil {
@@ -438,10 +528,7 @@ func main() {
 	}
 
 	// Finalize logging
-	logWriter.Close() //#nosec
+	logWriter.Close() // #nosec
 
-	// Do we have an issue? If so exit 1 unless NoFail is set
-	if (len(issues) > 0 || len(errors) > 0) && !*flagNoFail {
-		os.Exit(1)
-	}
+	exit(issues, errors, *flagNoFail)
 }
