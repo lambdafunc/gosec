@@ -3,6 +3,7 @@ package gosec_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/securego/gosec/v2"
 	"github.com/securego/gosec/v2/testutils"
 )
@@ -27,7 +28,7 @@ var _ = Describe("Import Tracker", func() {
 			files := pkgs[0].Syntax
 			Expect(files).Should(HaveLen(1))
 			tracker.TrackFile(files[0])
-			Expect(tracker.Imported).Should(Equal(map[string]string{"fmt": "fmt"}))
+			Expect(tracker.Imported).Should(Equal(map[string][]string{"fmt": {"fmt"}}))
 		})
 		It("should parse the named imports from file", func() {
 			tracker := gosec.NewImportTracker()
@@ -47,7 +48,7 @@ var _ = Describe("Import Tracker", func() {
 			files := pkgs[0].Syntax
 			Expect(files).Should(HaveLen(1))
 			tracker.TrackFile(files[0])
-			Expect(tracker.Imported).Should(Equal(map[string]string{"fmt": "fmt"}))
+			Expect(tracker.Imported).Should(Equal(map[string][]string{"fmt": {"fm"}}))
 		})
 	})
 })

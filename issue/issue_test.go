@@ -1,11 +1,13 @@
-package gosec_test
+package issue_test
 
 import (
 	"go/ast"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
 	"github.com/securego/gosec/v2/rules"
 	"github.com/securego/gosec/v2/testutils"
 )
@@ -36,7 +38,8 @@ var _ = Describe("Issue", func() {
 			ast.Walk(v, ctx.Root)
 			Expect(target).ShouldNot(BeNil())
 
-			issue := gosec.NewIssue(ctx, target, "TEST", "", gosec.High, gosec.High)
+			fobj := ctx.GetFileAtNodePos(target)
+			issue := issue.New(fobj, target, "TEST", "", issue.High, issue.High)
 			Expect(issue).ShouldNot(BeNil())
 			Expect(issue.Code).Should(MatchRegexp(`"bar"`))
 			Expect(issue.Line).Should(Equal("2"))
@@ -76,13 +79,13 @@ var _ = Describe("Issue", func() {
 			ast.Walk(v, ctx.Root)
 			Expect(target).ShouldNot(BeNil())
 
-			// Use hardcodeded rule to check assignment
+			// Use hardcoded rule to check assignment
 			cfg := gosec.NewConfig()
 			rule, _ := rules.NewHardcodedCredentials("TEST", cfg)
-			issue, err := rule.Match(target, ctx)
+			foundIssue, err := rule.Match(target, ctx)
 			Expect(err).ShouldNot(HaveOccurred())
-			Expect(issue).ShouldNot(BeNil())
-			Expect(issue.FileLocation()).Should(MatchRegexp("foo.go:5"))
+			Expect(foundIssue).ShouldNot(BeNil())
+			Expect(foundIssue.FileLocation()).Should(MatchRegexp("foo.go:5"))
 		})
 
 		It("should provide accurate line and file information", func() {
